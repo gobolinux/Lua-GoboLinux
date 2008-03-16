@@ -1,0 +1,528 @@
+#!/bin/lua
+-- vi: set foldmethod=marker foldlevel=0:
+--
+-- GoboInstall.lua
+-- ---------------------------------------------------------------------------
+--  - 2008
+-- ---------------------------------------------------------------------------
+-- Author: Aitor Pérez Iturri - <aitor.iturri@gmail.com>	
+-- Created: 20/01/08 00:00:06 CET
+-- License: GNU GPL (see www.fsf.org for details)
+-- ---------------------------------------------------------------------------
+-- Description:
+--
+-- ---------------------------------------------------------------------------
+
+require "env"
+
+-- Imports {{{1
+require "goboinstall"
+require "Steps"
+require "flavours"
+require "GoboLinux.output"
+require "GoboLinux.system"
+require "GoboLinux.fs"
+require "GoboLinux.errors"
+require "GoboLinux.switch"
+require "GoboLinux.cui"
+require "GoboLinux.Package"
+require "GoboLinux.Program"
+
+local Package = GoboLinux.Package
+local Program = GoboLinux.Program
+local output = GoboLinux.output
+local system = GoboLinux.system
+local fs = GoboLinux.fs
+local errors = GoboLinux.errors
+local cui = GoboLinux.cui
+
+-- Local Variables {{{1
+-- Languages {{{2
+local languages_list = {
+	{"Español",nil, "es"},
+	{"English",nil, "en"},
+	{"Portuguese", nil, "po"},
+	{"Euskera", nil, "eu"},
+	{"Catalá", nil, "ca"},
+	{"Galego", nil, "ga"}
+}
+
+-- Install Modes {{{2
+local install_methods_list = {
+	{"Standard Method",nil,"standard"},
+	{"Install on a removable device",nil,"removable"}
+}
+
+-- Modifiers for titles {{{2
+local modifiers = {
+		"LevelPosition=Left",
+		"Level=2",
+	}
+
+-- Some system varaibles {{{2
+local target = "/Mount/GoboLinux/"
+local devices = "/System/Kernel/Devices/"
+-- {{mount_point, partition}, [...]}
+local used_partitions = {}
+local mounts ={}
+local mounted = {}
+
+-- Local Functions {{{1
+-- Sort mounts table {{{2
+local function sort_mounts (a, b)
+	local la = (a[1].."/"):gsub("/+$",""):gsub("[^/]",""):len() 
+	local lb = (b[1].."/"):gsub("/+$",""):gsub("[^/]",""):len() 
+	if la <= lb then 
+		return true
+	end
+	return false
+end
+
+-- choose_mount_point {{{2
+local function choose_mount_point (disks, disk, mount_point, removable)
+	local title = "Where to Install GoboLinux [ "..mount_point.." ]"
+	local diskstr = "Choose a disk to install GoboLinux [ "..mount_point.." ]:"
+	local partitionstr = "Choose a partition to install GoboLinux [ "..mount_point.." ]:"
+	cui.title(title,"Color=BoldGreen",unpack(modifiers))
+	local destdisk, destpartition
+	if not disk or not disks[disk] then
+		local disks_choices = {}
+		for disk in pairs(disks) do
+			disks_choices[#disks_choices+1]={get_disk_name(disks ,disk), nil, disk}
+		end
+		destdisk=cui.ask_list(diskstr, 
+					disks_choices, nil, "Position=Center", "Align=Left",
+					unpack(modifiers))
+		if #disks[destdisk].nPartitions < 2 and removable then
+			cui.text("In order to install GoboLinux on a removable device, "..
+				"you need to have at least 2 partitions, you can do that"..
+				" with fdisk program", "Color=BoldRed",unpack(modifiers))
+			return choose_mount_point(disks, disk, mount_point, removable)
+		end
+	else
+		destdisk = disk
+	end
+	local partitions_choices = {}
+	for _, partition in pairs(disks[destdisk].nPartitions) do
+		-- Avoid to list used partitions
+		if not used_partitions[partition] then 
+			partitions_choices[#partitions_choices+1] = {
+				get_partition_name(disks, destdisk, partition),
+				nil,
+				partition
+			}
+		end
+	end
+	destpartition=cui.ask_list(partitionstr,
+							partitions_choices, nil, 
+						"Position=Center", "Align=Left",unpack(modifiers))
+	mounts[#mounts+1] = {mount_point, destpartition}
+	used_partitions[destpartition] = true
+	return destdisk, destpartition
+end
+
+-- Format Partitions {{{2
+local function format_partitions ()
+	table.sort(mounts, sort_mounts)
+	for _, mount in ipairs(mounts) do
+		local device = mount[2]
+		if cui.ask_yn("Are you going to format "..device
+				..", this will delete all contents in it."
+				.." Do you want to procced?") then
+			cui.text("Formating "..devices..device.. " (reiserfs)")
+			if not format_partition(devices..device) then
+				return false
+			end
+		end
+	end
+	return true
+end
+
+-- Umount devices {{{2
+local function umount_devices ()
+	local success = true
+	for i=#mounted, 1, -1  do
+		local mount = mounted[i]
+		success = success and umount_device(mount)
+	end
+	return success
+end
+
+-- Mount devices {{{2
+local function mount_devices ()
+	table.sort(mounts, sort_mounts)
+	for _, m in ipairs(mounts) do
+		local mount = m[1]
+		local device = m[2]
+		if not mount_device(target.."/"..mount, device) then
+			umount_devices()
+			return false
+		else
+			mounted[#mounted+1] = target.."/"..mount
+		end
+	end
+	return true
+end
+
+-- Step Functions {{{1
+-- Some Shared Steps {{{2
+-- ChooseRoot {{{3
+local function ChooseRoot (disks, removable_mode)
+	if removable_mode then
+		return "ChooseBoot", disks, choose_mount_point(disks, nil, "/", true)
+	else
+		return "AskMount", disks, choose_mount_point(disks, nil, "/")
+	end
+end
+
+-- AskMount {{{3
+local function AskMount (disks)
+	local text1 = "Do you want to choose more mount points?"
+	local text2 = "Please, chose a mount point: "
+	local err1 = "You can't choose /System/[...] as a mount point"
+	print()
+	if not cui.ask_yn(text1, "Color=White",unpack(modifiers)) then
+		return nil
+	end
+	local mountpoint = cui.ask(text2, "Color=White",unpack(modifiers))
+	choose_mount_point(disks, nil, mountpoint)
+	return "AskMount", disks
+end
+
+-- RemovableMountsSteps Steps {{{2
+-- ChooseBoot {{{3
+local function ChooseBoot (disks, disk, dest)
+	return nil, disks, choose_mount_point(disks, disk, "/System/Kernel/Boot")
+end
+
+-- ConfigureUsers Steps {{{2
+-- ChooseRootUser {{{3
+local function ChooseRootUser (users)
+	local root = cui.ask("Please, choose your root user name for the new GoboLinux System?")
+	print()
+	users[#users+1] = {root, 0, 0, "GoboLinux God!",
+			"/Users/"..root, "/bin/sh", {"sys"}}
+	return "AskMoreUsers", users
+end
+
+-- AskMoreUsers {{{3
+local function AskMoreUsers (users)
+	if cui.ask_yn("Do you want to add more users?")	then
+		return "ChooseUser", users
+	end
+	return nil, users
+end
+
+-- ChooseUser {{{3
+local function ChooseUser (users)
+	local user = cui.ask("User name?")
+	users[#users+1] = {user, 1000 + (#users-1), 100, user, "/Users/"..user, 
+			"/bin/sh", {"users", "audio"}}
+	return "AskMoreUsers", users
+end
+
+-- StepsInstall Functions {{{2
+-- Welcome {{{3
+local function Welcome ()
+	local text = [[
+
+GoboLinux Installer Tool.
+Written by Aitor Pérez Iturri.
+GNU GPL - 2207.
+
+]]
+	cui.title("GOBOLINUX INSTALLER 1.0","Level=1","Position=Center","LevelPosition=Center")
+	cui.text(text,"Align=Center","Level=1","Position=Center","LevelPosition=Center")
+	return "ChooseLanguage"
+end
+
+-- ChooseLanguage {{{3
+local function ChooseLanguage ()
+	if true then
+		return "ChooseInstallMode"
+	end
+	local text = [[
+
+Here you can choose the language of your GoboLinux system.
+
+]]
+	cui.title("Language Selection","Color=BoldGreen",unpack(modifiers))
+	cui.text(text,unpack(modifiers))
+	cui.ask_list("Choose your language (or enter a command):",
+		languages_list, menu_commands_list, "Position=Center","Align=Left",unpack(modifiers))
+	return "ChooseInstallMode"
+end
+
+-- ChooseInstallMehotd {{{3
+local function ChooseInstallMethod ()
+	local text = [[
+
+Here you can choose the installion method. You can install GoboLinux directly on a hard disk or you can select to install it on an removable device (like an usb or a compact flash).
+
+]]
+	local answer
+	cui.title("Install Method","Color=BoldGreen",unpack(modifiers))
+	cui.text(text,unpack(modifiers))
+	answer = cui.ask_list("Choose an install mode (or enter a command):",
+		install_methods_list, menu_commands_list, "Position=Center","Align=Left",unpack(modifiers))
+	return switch(answer):caseof {
+		removable = function ()
+			return "RemovableMounts", get_disks(true)
+		end,
+		standard = function ()
+			return "StandardMounts", get_disks()
+		end
+	}
+end
+
+-- StandardMounts {{{3
+local function StandardMounts (disks)
+	local StandardMountsSteps = {
+		ChooseRoot = ChooseRoot,
+		AskMount = AskMount,
+	}
+	local steps = Steps.new(StandardMountsSteps)
+	steps:start("ChooseRoot", disks, nil, "/")
+	return "InstallWarning", disks
+end
+
+-- RemovableMounts {{{3
+local function RemovableMounts (disks)
+	local RemovableMountsSteps = {
+		ChooseRoot = ChooseRoot,
+		ChooseBoot = ChooseBoot,
+	}
+	local steps = Steps.new(RemovableMountsSteps)
+	steps:start("ChooseRoot", disks, true)
+	return "InstallWarning", disks
+end
+
+-- InstallWarning {{{3
+local function InstallWarning (disks)
+	print()
+	local text = "You are going to install GoboLinux on:\n\n"
+	for _, m in ipairs(mounts) do 
+		text = text .. "\t"..get_partition_name(disks, m[2]:gsub("[%A%d]",""),
+								m[2])
+					.." -> "..m[1].."  - ["
+				..get_disk_name(disks, m[2]:gsub("[%A%d]","")).."]\n"
+	end
+	cui.text(text,unpack(modifiers),"Position=Center","Color=BoldMagenta",unpack(modifiers))
+	print()
+	if not cui.ask_yn("Do you want to proceed?",unpack(modifiers)) then
+		return nil
+	end
+	return "CreateGoboTree"
+end
+
+-- ChooseFlavour {{{3
+local function ChooseFlavour ()
+	local title = "Choose Flavour"
+	local flavours_choices = {}
+	local answer
+	for flavour in pairs(flavours) do
+		flavours_choices[#flavours_choices+1] = {flavour, nil, flavour}
+	end
+	cui.title(title, "Color=BoldGreen", unpack(modifiers))
+	answer = cui.ask_list("Choose a flavour to install", flavours_choices, nil, 
+			"Position=Center", unpack(modifiers))
+	return "InstallPackages", flavours[answer], answer
+end
+
+-- CreateGoboTree {{{3
+-- TODO: fix some paths to Resources
+local function CreateGoboTree ()
+	if not fs.is_directory(target) then
+		output.log_error("Unable to mount "..target.." to install")
+		return nil
+	end
+	local tasks = {
+		{"Mounting filesystems", mount_devices},
+		{"Creating GoboLinux Tree", function ()
+			if not system.create_tree(target) then
+				return nil, "Unable to create GoboTree under "..target
+			end
+		end},
+		{"Creating entries under /System/Variable", function ()
+			return  create_var_files(target)
+		end},
+		{"Creating fstab file", function ()
+			table.sort(mounts, sort_mounts)
+			return create_fstab(target, mounts)
+		end},
+		{"Creating issue file", function () 
+			return create_issue(target)
+		end},
+		{"Creating hosts file", function () 
+			return create_hosts (target)
+		end},
+		{"Creating passwd file", function ()
+			return create_passwd(target)
+		end},
+		{"Creating shadow file", function ()
+			return create_shadow(target)
+		end},
+		{"Creating group file", function ()
+			return create_group(target)
+		end},
+		{"Creating gshadow file", function ()
+			return create_gshadow(target)
+		end},
+		{"Copying files", function ()
+			if not fs.cpdir("Resources/Fonts/", target.."/Files/Fonts") then
+				return nil, "Unable to copy Fonts"
+			end
+			if not fs.cp("Resources/ramfs.cpio.gz", target.."/System/Kernel/Boot/initramfs.cpio.gz") then
+				return nil, errors.error()
+			end
+		end},
+	}
+	local co = coroutine.create(function ()
+		for _, p in ipairs(tasks) do
+			coroutine.yield(true, p[1], p[2])
+		end
+		return true, "GoboLinux Tree Created"
+	end)
+	if not format_partitions() then
+		return "GoodBye", "Unable to format some partitions"
+	end
+	cui.title("Creating GoboLinux Tree","Color=BoldGreen",unpack(modifiers))
+	local errors
+	_, errors = cui.percent_bar(#tasks, co, "Position=Center", unpack(modifiers))
+	if errors then
+		return "GoodBye", errors
+	end
+	print()
+	return "ChooseFlavour"
+end
+
+-- InstallPackages {{{3
+local function InstallPackages (packages, flavour)
+	local co = coroutine.create(function ()
+		for i,p in ipairs(packages) do
+			local package = Package.new(p[1],p[2],p[3])
+			if package then
+				local desc = "Installing "..package.Name.." "..package.Version
+				coroutine.yield(nil,desc, function () 
+					package:install()
+				end)
+				local program = Program.new(package.Name)
+				desc = "Symlinking "..package.Name.." "..package.Version
+				coroutine.yield(true,desc, function ()
+									os.execute("sleep 2")
+					if not program then 
+						return nil, errors.error()
+					end
+					return symlink_program(program)
+				end)
+			end
+		end
+		return true,"Packages Installed"
+	end)
+	GOBO_Prefix = target
+	cui.title("Installing Packages ["..flavour.."]","Color=BoldGreen",unpack(modifiers))
+	local err
+	_,err = cui.percent_bar(#packages, co, "Position=Center",unpack(modifiers))
+	if err then
+		return "GoodBye", err
+	end
+	print()
+	return "ConfigureUsers"
+end
+
+-- ConfigureUsers {{{3
+local function ConfigureUsers ()
+	local ConfigureUsersSteps = {
+		ChooseRootUser = ChooseRootUser,
+		AskMoreUsers = AskMoreUsers,
+		ChooseUser = ChooseUser,
+	}
+	cui.title("GoboLinux Users","Color=BoldGreen",unpack(modifiers))
+	local steps = Steps.new(ConfigureUsersSteps)
+	users = steps:start("ChooseRootUser", {})
+	print()
+	local co = coroutine.create(function ()
+		for _, user in ipairs(users) do
+			coroutine.yield(nil, "Adding user "..user[1], function () 
+				return add_user(target, user)
+			end)
+			coroutine.yield(true,"Creating Home for user "..user[1], function () 
+				return create_user_home(target, user)
+			end)
+		end
+		return true, "All users added"
+	end)
+	local err
+	_, err = cui.percent_bar(#users, co, "Position=Center",unpack(modifiers))
+	if err then
+		return "GoodBye", err
+	end
+	return "ConfigureBoot"
+end
+
+-- Configure Boot {{{3
+local function ConfigureBoot ()
+	local title="Configuring Grub"
+	local ask1 = "Do you want to install grub for your new system?"
+	local ask2 = "Are you going to install grub on %s, do you want to continue?"
+	local text = "Installing grub on %s"
+	local boot_partition, root_partition
+	cui.title(title, "Color=BoldGreen", unpack(modifiers))
+	if not cui.ask_yn(ask1,unpack(modifiers)) then
+		return "GoodBye"
+	end
+	table.sort(mounts, sort_mounts)
+	for _, m in ipairs(mounts) do
+		if m[1] == "/System/Kernel/Boot" then
+			boot_partition=m[2]
+		elseif m[1] == "/" then
+			root_partition = m[2]
+		end
+	end
+	if not boot_partition then 
+		boot_partition = root_partition
+	end
+	if not cui.ask_yn(string.format(ask2,boot_partition:gsub("[%A%d]","")),unpack(modifiers)) then
+		return "GoobBye"
+	end
+	cui.text(string.format(text,boot_partition:gsub("[%A%d]","")), unpack(modifiers))
+	add_grub_entry(target, boot_partition, root_partition, "noapic vga=0", "GoboLinux - Console")
+	add_grub_entry(target, boot_partition, root_partition, "noapic vga=791", "GoboLinux - FrameBuffer Console")
+	return "GoodBye"
+end
+
+-- GoodBye {{{3
+local function GoodBye (err)
+	local title1 = "Thanks for Installing GoboLinux"
+	local title2 = "GoboLinux install failed"
+	if not err then
+		cui.title(title1,"Color=BoldGreen",unpack(modifiers))
+	else
+		cui.title(title2,"Color=BoldRed", unpack(modifiers))
+		print()
+		cui.text(err,"Color=Red", unpack(modifiers))
+	end
+end
+-- Main {{{1
+local function main ()
+	local InstallSteps = {
+		Welcome = Welcome,
+		ChooseLanguage = ChooseLanguage,
+		ChooseInstallMode = ChooseInstallMethod,
+		RemovableMounts = RemovableMounts,
+		StandardMounts = StandardMounts,
+		InstallWarning = InstallWarning,
+		CreateGoboTree = CreateGoboTree,
+		ChooseFlavour = ChooseFlavour,
+		InstallPackages = InstallPackages,
+		ConfigureUsers = ConfigureUsers,
+		ConfigureBoot = ConfigureBoot,
+		GoodBye = GoodBye,
+	}
+	cui.clear_screen()
+	cui.set_cursor(0,0)
+	local steps = Steps.new(InstallSteps)
+	steps:start("Welcome")
+end
+
+main()

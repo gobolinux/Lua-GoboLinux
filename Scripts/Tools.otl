@@ -1,0 +1,7 @@
+Lua-GoboLinux Tools
+	Script de Instalación
+		Permite seleccionar paquetes, arquitectura e instalarlos
+		Tiene que crear el sistema
+		Permitir crear usuarios
+		Permitir crear particiones
+		Instalar grub para arrancar

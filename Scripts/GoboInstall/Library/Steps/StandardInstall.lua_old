@@ -1,0 +1,333 @@
+-- vi: set foldmethod=marker foldlevel=0:
+--
+-- StandardSteps.lua
+-- ---------------------------------------------------------------------------
+--  - 2008
+-- ---------------------------------------------------------------------------
+-- Author: Aitor Pérez Iturri - <aitor.iturri@gmail.com>	
+-- Created: 06/02/08 18:33:38 CET
+-- License: GNU GPL (see www.fsf.org for details)
+-- ---------------------------------------------------------------------------
+-- Description:
+--
+-- ---------------------------------------------------------------------------
+
+module("StandardInstall", package.seeall)
+
+-- Imports
+require "Steps"
+require "goboinstall"
+require "GoboLinux.cui"
+require "GoboLinux.errors"
+require "GoboLinux.fs"
+--require "GoboLinux.system"
+
+local errors = GoboLinux.errors
+local fs = GoboLinux.fs
+local cui = GoboLinux.cui
+local system = GoboLinux.system
+
+local modifiers = {
+	"LevelPosition=Center",
+	"Level=2"
+}
+
+local mounts = {}
+local used_partitions = {}
+
+-- Local Functions {{{1
+local function sort_mounts (a, b)
+	local la = (a[1].."/"):gsub("/+$",""):gsub("[^/]",""):len() 
+	local lb = (b[1].."/"):gsub("/+$",""):gsub("[^/]",""):len() 
+	if la <= lb then 
+		return true
+	end
+	return false
+end
+
+--[[local function choose_mount_point (disks, disk, mount_point)
+	local title = "Where to Install GoboLinux [ "..mount_point.." ]"
+	local diskstr = "Choose a disk to install GoboLinux [ "..mount_point.." ]:"
+	local partitionstr = "Choose a partition to install GoboLinux [ "..mount_point.." ]:"
+	local disk_choices, partition_choices
+	cui.title(title,"Color=BoldGreen",unpack(modifiers))
+	if not disk then
+		disk_choices = get_disk_choices(disks)
+		destdisk = cui.ask_list(diskstr, disk_choices, nil, "Position=Center",
+				"Align=Left", unpack(modifiers))
+	else
+		destdisk = disk
+	end
+	partition_choices = get_partition_choices(disks, destdisk, used_partitions)
+	destpartition=cui.ask_list(partitionstr, partition_choices, nil,
+						"Position=Center", "Align=Left",unpack(modifiers))
+	mounts[#mounts+1] = {mount_point, destpartition}
+	used_partitions[destpartition] = true
+	return destdisk, destpartition
+end--]]
+
+local function format_partitions ()
+	local text1 = "You are going to format %s, this operation will"
+		.. " remove all the contents. Do you want to format it?"
+	local text2 = "Formating %s (reiserfs)"
+--	table.sort(mounts, sort_mounts)
+	for _, mount in ipairs(mounts) do
+		local device = mount[2]
+		if cui.ask_yn(string.format(text1, device), "Color=White",
+						unpack(modifiers)) then
+			cui.text(string.format(text2, device), "Color=White",
+						unpack(modifiers))
+			if not format_partition(device) then
+				return false
+			end
+		end
+	end
+	return true
+end
+-- Steps {{{1
+-- ChooseRoot {{{2
+local function ChooseRoot (disks)
+	return "AskMount", disks, choose_mount_point(disks, nil, "/")
+end
+
+-- AskMount {{{2
+--[[local function AskMount (disks)
+	local text1 = "Do you want to choose more points?"
+	local text2 = "Choose a mount point:"
+	local err1 = "You can't choose /System/* as a mount point"
+	print()
+	if not cui.ask_yn(text1, "Color=White", unpack(modifiers)) then
+		return "InstallWarning", disks
+	end
+	print()
+	local mountpoint = cui.ask(text2, "Color=White", unpack(modifiers))
+	choose_mount_point(disks, nil, mountpoint)
+	return "AskMount", disks
+end--]]
+local function AskMount (disks)
+	return "InstallWarning", ask_mount (disks)
+end
+
+-- InstallWarning {{{2
+--[[local function InstallWarning (disks)
+	print()
+	local text = "You are going to install GoboLinux on:\n\n"
+	for _, m in ipairs(mounts) do 
+		text = text .. "\t"..get_partition_name(disks, m[2]:gsub("[%A%d]",""),
+								m[2])
+					.." -> "..m[1].."  - ["
+				..get_disk_name(disks, m[2]:gsub("[%A%d]","")).."]\n"
+	end
+	cui.text(text,unpack(modifiers),"Position=Center","Color=BoldMagenta",unpack(modifiers))
+	print()
+	if not cui.ask_yn("Do you want to proceed?","Color=White",unpack(modifiers)) then
+		return nil, "Installation Aborted"
+	end
+	table.sort(mounts, sort_mounts)
+	return "CreateGoboTree"
+end--]]
+local function InstallWarning (disks)
+	if not install_warning(disks) then
+		return nil, "Installation aborted"
+	else
+		table.sort(mounts, sort_mounts)
+		return "CreateGoboTree"
+	end
+end
+
+-- CreateGoboTree {{{2
+local function CreateGoboTree ()
+	if not fs.is_directory(Target) then
+		output.log_error("Unable to mount "..Target.." to install")
+		return nil
+	end
+	local tasks = {
+		{"Mounting filesystems", function ()
+			Mounted = mount_devices(Target, mounts)
+			if not Mounted then
+				return nil, "Unable to mount devices under "..Target
+			end
+		end},
+		{"Creating GoboLinux Tree", function ()
+			if not system.create_tree(Target) then
+				return nil, errors.error()
+			end
+		end},
+		{"Creating entries under /System/Variable", function ()
+			return  create_var_files(Target)
+		end},
+		{"Creating fstab file", function ()
+		--	table.sort(mounts, sort_mounts)
+			return create_fstab(Target, mounts)
+		end},
+		{"Creating issue file", function () 
+			return create_issue(Target)
+		end},
+		{"Creating hosts file", function () 
+			return create_hosts (Target)
+		end},
+		{"Creating passwd file", function ()
+			return create_passwd(Target)
+		end},
+		{"Creating shadow file", function ()
+			return create_shadow(Target)
+		end},
+		{"Creating group file", function ()
+			return create_group(Target)
+		end},
+		{"Creating gshadow file", function ()
+			return create_gshadow(Target)
+		end},
+		{"Copying files", function ()
+			if not fs.cpdir("Resources/Fonts/", Target.."/Files/Fonts") then
+				return nil, "Unable to copy Fonts"
+			end
+			if not fs.cp("Resources/ramfs.cpio.gz", Target.."/System/Kernel/Boot/initramfs.cpio.gz") then
+				return nil, errors.error()
+			end
+		end},
+	}
+	local co = coroutine.create(function ()
+		for _, p in ipairs(tasks) do
+			coroutine.yield(true, p[1], p[2])
+		end
+		return true, "GoboLinux Tree Created"
+	end)
+	if not format_partitions() then
+		return nil, "Unable to format some partitions"
+	end
+	print()
+	cui.title("Creating GoboLinux Tree","Color=BoldGreen",unpack(modifiers))
+	print()
+	local errors
+	_, errors = cui.percent_bar(#tasks, co, "Position=Center", unpack(modifiers))
+	if errors then
+		return nil, errors
+	end
+	print()
+	return nil
+end
+
+-- ChooseRootUser {{{2
+local function ChooseRootUser (users)
+	cui.title("GoboLinux Users","Color=BoldGreen",unpack(modifiers))
+	print()
+	local root = cui.ask("Please, choose your root user name for the new GoboLinux System?",
+			"Color=White", unpack(modifiers))
+	users[#users+1] = {root, 0, 0, "GoboLinux God!",
+			"/Users/"..root, "/bin/sh", {"sys"}}
+	return "AskUser", users
+end
+
+-- ChooseUser {{{2
+local function AskUser (users)
+	print()
+	if not cui.ask_yn("Do you want to add more users?","Color=White",unpack(modifiers))	then
+		return "CreateUsers", users
+	end
+	print()
+	local user = cui.ask("User name?","Color=White",unpack(modifiers))
+	users[#users+1] = {user, 1000 + (#users-1), 100, user, "/Users/"..user, 
+			"/bin/sh", {"users", "audio"}}
+	return "AskUser", users
+end
+
+-- CreateUsers {{{2
+local function CreateUsers (users)
+	local co = coroutine.create(function ()
+		for _, user in ipairs(users) do
+			coroutine.yield(nil, "Adding user "..user[1], function () 
+				return add_user(Target, user)
+			end)
+			coroutine.yield(true,"Creating Home for user "..user[1], function () 
+				return create_user_home(Target, user)
+			end)
+		end
+		return true, "All users added"
+	end)
+	local err
+	_, err = cui.percent_bar(#users, co, "Position=Center",unpack(modifiers))
+	if err then
+		return nil, err
+	end
+	return "ConfigureBoot"
+end
+
+-- ConfigureBoot {{{2
+local function ConfigureBoot ()
+	local title="Configuring Grub"
+   	local ask1 = "Do you want to install grub for your new system?"
+	local ask2 = "Are you going to install grub on %s, do you want to continue?"
+	local text = "Installing grub on %s"
+	local boot_partition, root_partition
+	cui.title(title, "Color=BoldGreen", unpack(modifiers))
+	print()
+	if not cui.ask_yn(ask1,"Color=White",unpack(modifiers)) then
+		return nil, "Successful install."
+	end
+	for _, m in ipairs(mounts) do
+		if m[1] == "/System/Kernel/Boot" then
+				boot_partition=m[2]
+		elseif m[1] == "/" then
+				root_partition = m[2]
+		end
+	end
+	if not boot_partition then 
+		boot_partition = root_partition
+	end
+        if not cui.ask_yn(string.format(ask2,boot_partition:gsub("[%A%d]","")),
+					"Color=White",unpack(modifiers)) then
+		return nil
+	end
+	cui.text(string.format(text,boot_partition:gsub("[%A%d]","")), 
+								unpack(modifiers))
+	if not create_grubmenu(Target) then
+		return nil, nil, "Unable to create grub menu"
+	end
+	if not add_grub_entry(Target, boot_partition, 
+							root_partition, "noapic vga=0", 
+							"GoboLinux - Console") then
+		return nil, nil, "Unable to add grub entry"
+	end
+	if not add_grub_entry(Target, boot_partition, 
+						root_partition, "noapic vga=791", 
+						"GoboLinux - FrameBuffer Console") then
+		return nil, nil, "Unable to add grub entry"
+	end
+	local cmd, text
+	cmd, text = install_grub(boot_partition, root_partition)
+	print()
+	cui.text(cmd, "Color=White", unpack(modifiers))
+	print()
+	cui.text(text, "Color=Magenta", unpack(modifiers))
+	print()
+	return nil
+end
+
+-- Exported Functions {{{1
+-- start {{{2
+function start ()
+	local StandardSteps = {
+		ChooseRoot = ChooseRoot,
+		AskMount = AskMount,
+		InstallWarning = InstallWarning,
+		CreateGoboTree = CreateGoboTree,
+		}
+	local steps = Steps.new(StandardSteps)
+	local disks = get_disks()
+	return steps:start("ChooseRoot", disks)
+end
+
+-- finish {{{2
+function finish ()
+	local StandardStepsFinish = {
+		ChooseRootUser = ChooseRootUser,
+		AskUser = AskUser,
+		CreateUsers = CreateUsers,
+		ConfigureNetwork = ConfigureNetwork,
+		ConfigureBoot = ConfigureBoot,
+	}
+	local steps = Steps.new(StandardStepsFinish)
+	return steps:start("ChooseRootUser", {})
+end
+

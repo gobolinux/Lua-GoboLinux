@@ -1,0 +1,48 @@
+/*
+ * =====================================================================================
+ *
+ *       Filename:  FILES
+ *
+ *    Description:  
+ *
+ *        Version:  1.0
+ *        Created:  23/11/07 00:15:22 CET
+ *       Revision:  none
+ *
+ *         Author:  Aitor Pérez Iturri (api), aitor.iturri@gmail.com
+ *        Company:  ia Systems
+ *
+ * =====================================================================================
+ */
+
+Files:
+	FILES		This file.
+	README		Lua-Archive README.
+	Makefile	Makefile for make tool.
+	src/		Common sources directory.
+		Makefile
+		aux.c
+		aux.h
+		callbacks.c
+		callbacks.h
+		luarchive.c
+		luarchive.h
+	tar/		Tar sources directory.
+		Makefile
+		ltar.c
+		ltar.h
+	cpio/		Cpio sources directory.
+		Makefile
+		lcpio.c
+		lcpio.h
+	tests/		Tests directory.
+		testTar/		Tests for tar module.
+			tar.lua			Little implementation of unix tar command in lua (so tiny of course ;).
+			test.tar		Expample tar file.
+			test.tar.gz		Example tgz file.
+			test.tar.bz2	Example tbz2 file.
+		cpioTar/		Test for cpio module
+			cpio.lua		Little cpio tool implementated in lua.
+			test.cpio		Cpio test file.
+			test.cpio.gz	Cpio test file (gzipped).
+			test.cpio.bz2	Cpio test file (bzipped).

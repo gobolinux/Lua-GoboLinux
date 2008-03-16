@@ -1,0 +1,456 @@
+#!/bin/lua
+-- vi: set filetype=lua foldmethod=marker foldlevel=0:
+--
+-- GoboInstall.lua
+-- ---------------------------------------------------------------------------
+--  - 2008
+-- ---------------------------------------------------------------------------
+-- Author: Aitor Pérez Iturri - <aitor.iturri@gmail.com>	
+-- Created: 17/01/08 20:21:05 CET
+-- License: GNU GPL (see www.fsf.org for details)
+-- ---------------------------------------------------------------------------
+-- Description:
+--
+-- ---------------------------------------------------------------------------
+
+require "env"
+
+-- Imports
+require "GoboLinux.output"
+require "GoboLinux.system"
+require "GoboLinux.fs"
+require "GoboLinux.switch"
+
+local output = GoboLinux.output
+local system = GoboLinux.system
+local fs = GoboLinux.fs
+
+local Disks = {
+	Removables = {},
+	HardDisks = {},
+}
+
+
+local Steps = {
+	Welcome,
+	ChooseLanguage,
+	ChooseInstallMethod
+}
+
+-- Local Variables
+local partition_info = "/System/Kernel/Status/partitions"
+local block_devices = "/System/Kernel/Objects/block/"
+local devices = "/System/Kernel/Devices/"
+-- Partition ids
+local partition_types = {}
+partition_types[5] = "Extended"
+partition_types[83] = "Linux"
+partition_types[82] = "Linux Swap / Solaris"
+
+-- Menu commands
+local menu_commands_str = "'h': help | 'p': previous menu | 'c': avaible commands"
+local hook_commands_help 
+local menu_commands_list = {
+	{"h","Show help for current menu","help"},
+	{"p", "Return to previous menu", "previous"},
+--	{"c", "Shows avaible commands", "commands"}
+}
+local menu_commands_actions = {
+	help = function () hook_commands_help() end
+}
+
+-- Languages
+local languages_list = {
+	{"Español",nil, "es"},
+	{"English",nil, "en"},
+	{"Portuguese", nil, "po"},
+	{"Euskera", nil, "eu"},
+	{"Catalá", nil, "ca"},
+	{"Galego", nil, "ga"}
+}
+
+local install_modes_list = {
+	{"Standard Mode", "Installs GoboLinux on a hard drive", "standard"},
+	{"Install on Removable device (like USB)", "Installs GoboLinux on a removable device", "removable"},
+}
+
+local steps_list = {
+	ask_language,
+	ask_install_mode,
+}
+
+-- Functions to add and remove options from options table
+local function menu_add_command (opt, desc, value, func)
+	menu_command_list[#menu_command_list] = {opt, desc, value}
+	menu_command_actions[value] = func
+end
+
+local function menu_remove_command (opt)
+	menu_command_list[opt] = nil
+end
+
+local function menu_commands_to_str ()
+	local str ="Commands: "
+	for i, l in ipairs(menu_commands_list) do
+		local opt, desc = l[1], l[2]
+		str=str.."'"..opt.."': "..(desc or "").." | "
+	end
+	return str
+end
+
+-- Functions to get info about devices
+--
+local function device_is_removable (device)
+	local fd = io.open(block_devices..device.."/removable")
+	if not fd then return nil end
+	local removable = fd:read("*n")
+	if removable == 1 then
+		fd:close()
+		return true
+	end
+	fd:close()
+	return false
+end
+
+local function device_size (device, partition)
+	local fd = io.open(block_devices..device.."/"..(partition or "").."/size")
+	if not fd then return nil end
+	local size = fd:read("*n")
+	fd:close()
+	return tonumber(string.format("%.0f",size / 2048))
+end
+
+local function device_model (device)
+	local fd = io.open(block_devices..device.."/device/model")
+	if not fd then return nil end
+	local model = fd:read("*l")
+	fd:close()
+	return model:gsub("%s*$",""):gsub("^%s*","")
+end
+
+local function device_vendor (device)
+	local fd = io.open(block_devices..device.."/device/vendor")
+	if not fd then return nil end
+	local vendor = fd:read("*l")
+	fd:close()
+	return vendor:gsub("%s+$",""):gsub("^%s*","")
+end
+
+local function device_is_disk (device)
+	return device:match("sd*") or device:match("hd*")
+end
+
+local function device_partition_type (partition)
+	local disk = partition:gsub("[%A%d]","")
+	local npartition = partition:gsub("%D","")
+	local fd = io.popen("sfdisk --id "..devices..disk
+		.." "..npartition.. " 2>/dev/null")
+	if not fd then return "Unknow" end
+	local id = fd:read("*n")
+	fd:close()
+	if partition_types[id] then 
+		return partition_types[id]
+	end
+	return "Unknow"
+end
+
+-- Functions to create disks and partitions table
+-- ----------------------------------------------
+
+-- Adds a disk into the table
+local function add_disk (disk)
+	if device_is_removable(disk) and device_is_disk(disk) then
+		-- Disk is a removable device
+		type_table = Disks.Removables
+	else
+		-- Disk is a hard drive
+		type_table = Disks.HardDisks
+	end
+	-- Set disk info
+	if device_is_disk(disk) then
+		type_table[disk] = type_table[disk] or {
+			Partitions = {},
+			nPartitions = {}	
+		}
+		disk_table = type_table[disk]
+		disk_table.Vendor = device_vendor(disk) or "Disk"
+		disk_table.Model = device_model(disk) or "Unknow"
+		disk_table.Size = device_size(disk)
+	end
+end
+
+local function add_partition (partition)
+	local disk = partition:gsub("[%A%d]","")
+	if device_partition_type(partition) == "Extended" then return nil end
+	if device_is_removable(disk) and device_is_disk(disk) then
+		-- Partition belongs to a removable device
+		type_table = Disks.Removables
+	else
+		-- Partition belongs to a hard drive
+		type_table = Disks.HardDisks
+	end
+	-- Set partition info
+	if device_is_disk(disk) then
+		type_table[disk] = type_table[disk] or {
+			Partitions = {},
+			nPartitions = {}
+		}
+		local npartitions = #type_table[disk].nPartitions
+		type_table[disk].nPartitions[npartitions+1] = partition
+		type_table[disk].Partitions = type_table[disk].Partitions or {}
+		type_table[disk].Partitions[partition] = {
+			Size = device_size(disk,partition),
+			Type = device_partition_type(partition)
+		}
+	end
+end
+
+local function set_disk_flag (disk, flag, value)
+	for types in pairs(Disks) do
+		if Disks[types][disk] then
+			Disks[types][disk][flag] = value
+		end
+	end
+end
+
+local function set_partition_flag (partition, flag, value)
+	local disk = partition:gsub("[%A%d]","")
+	for types in pairs(Disks) do
+		if Disks[types][disk] and Disks[types][disk].Partitions[partition] then
+			Disks[types][disk].Partitions[partition][flag] = value
+		end
+	end
+end
+
+-- Return a list of ready disk to install gobo on them
+--
+-- We keep disk in disks table:
+--	disks = {
+--		Removables = {
+--			disk = {
+--				Model
+--				Vendor
+--				Size
+--				nPartitions = {
+--					part1,
+--					part2,
+--					...
+--				},
+--				Partitions = {
+--					partition = {
+--						Size
+--					}
+--				}
+--			},
+--			...
+--		}
+--		HardDisks = the same as above
+-- }
+--
+local function get_disks ()
+	local fd = io.open(partition_info,"r")
+--	local disks = {
+--		Removables = {},
+--		HardDisks = {},
+--		Partitions = {}
+--	}
+	fd:read("*l")
+	fd:read("*l")
+--	local disk, partition
+	for line in fd:lines() do
+		local _,_,entry = line:find("(%a+.*)",0)
+		local disk, partition
+		if entry:match("%d$") then
+			-- partition device
+			disk, partition = entry:gsub("[%A%d]",""), entry
+			add_disk(disk)
+			add_partition(partition)
+		else
+			-- disk device
+			disk = entry
+			add_disk(disk)
+		end
+	end
+	fd:close()
+	return disks
+end
+
+-- Functions to manage lvm 
+--
+
+local function lvm_support ()
+	if fs.is_executable("/bin/lvm") then
+		return true
+	end
+	return false
+end
+
+local function get_lvm_devices ()
+	local fd = io.popen("/bin/lvm pvdisplay -c", "r")
+	if not fd then return nil end
+	for line in fd:lines() do
+		partition, volume_group = line:match("(%a+%d+):(%w*)")
+		set_partition_flag(partition, "LVM", volume_group)
+	end
+	fd:close()
+end
+
+local function welcome ()
+	output.log_terse("---------------------------")
+	output.log_terse("GoboLinux Installation Tool")
+	output.log_terse("")
+	output.log_terse("Aitor Pérez Iturri")
+	output.log_terse("---------------------------")
+	output.log_terse("")
+end
+
+local function ask_language ()
+	hook_commands_help = function ()
+		output.log_terse("Here you can select your native language")
+	end
+	output.log_terse("")
+	output.log_terse("******** *********")
+	output.log_terse("Language Selection")
+	output.log_terse("******** *********")
+	output.log_terse(menu_commands_to_str())
+	output.log_terse("")
+	local answer = system.ask_choice_list("Choose your language (or enter a command):",
+		languages_list, menu_commands_list)
+	while menu_commands_actions[answer] do
+		menu_commands_actions[answer]()
+		answer = system.ask_choice_list("Choose your language (or enter a command):",
+			languages_list, menu_commands_list)
+	end
+end
+
+local function ask_install_mode () 
+	output.log_terse("")
+	output.log_terse("*********** ****")
+	output.log_terse("Instalation Mode ")
+	output.log_terse("*********** ****")
+	output.log_terse(menu_commands_to_str())
+	output.log_terse("")
+	local answer
+	answer = system.ask_choice_list("Choose an instalation mode (or enter a command):",
+		install_modes_list, menu_commands_list)
+	return answer
+end
+
+local function show_found_disk (disks_list, disk)
+	if not disks_list[disk] then return nil end
+	local dtable = disks_list[disk]
+	output.log_terse("* ".. dtable.Vendor.." "..dtable.Model.." ("..disk..")"
+		.." ["..tostring(dtable.Size).." Mb]",1)
+	local nptable = dtable.nPartitions
+	for _,partition in ipairs(nptable) do
+		local ptable = dtable.Partitions[partition]
+		local str = partition.." ["..ptable.Size.." Mb]"
+		if ptable.LVM then
+			str = str.." LVM Physical Volume ["..ptable.LVM.."]"
+		else
+			str = str .. " "..ptable.Type
+		end
+		output.log_terse(str,2)
+	end
+end
+
+local function show_found_disks (disks_list)
+	output.log_terse("")
+	output.log_terse("Found devices:")
+	output.log_terse("")
+	for disk in pairs(disks_list) do
+		show_found_disk(disks_list, disk)
+		output.log_terse("")
+	end
+end
+
+local function get_disk_name (disks_list, disk)
+	if not disks_list[disk] then return nil end
+	local dtable = disks_list[disk]
+	return dtable.Vendor.." "..dtable.Model.." ("..disk..")"
+		.." ["..tostring(dtable.Size).." Mb]",1
+end
+
+local function get_partition_name (disks_list, disk, partition)
+	if not disks_list[disk] or not disks_list[disk].Partitions[partition] then
+		return nil
+	end
+	local ptable = disks_list[disk].Partitions[partition]
+	local str = partition.." ["..ptable.Size.." Mb]"
+	if ptable.LVM then
+		str = str.." LVM Physical Volume ["..ptable.LVM.."]"
+	else
+		str = str .. " "..ptable.Type
+	end
+	return str
+end
+
+local function ask_where_to_install(disks_list)
+	local disks_choices = {}
+	local partitions_choices = {}
+	for disk in pairs(disks_list) do
+		disks_choices[#disks_choices+1]={get_disk_name(disks_list,disk), nil, disk}
+	end
+	show_found_disks(disks_list)
+	output.log_terse("")
+	output.log_terse("")
+	answer = system.ask_choice_list("Choose a disk to install GoboLinux on it (or enter a command):",
+		disks_choices,nil)
+	output.log_terse("")
+	for _, partition in pairs(disks_list[answer].nPartitions) do
+		partitions_choices[#partitions_choices+1] = {
+			get_partition_name(disks_list, answer, partition),
+			nil,
+			partition
+		}
+	end
+	show_found_disk(disks_list, answer)
+	output.log_terse("")
+	answer = system.ask_choice_list("Choose a partition to install GoboLinux on it (or enter a command):",
+		partitions_choices, nil)
+	return answer
+end
+
+local function install_gobo (partition)
+	local dev_file = devices..partition
+	if os.execute("mount "..dev_file.." ".."/Mount/GoboLinux") ~= 0 then
+	end
+end
+
+local function create_goob_tree ()
+	local mount_point = "/Mount/GoboLinux"
+	if not system.create_tree(mount_point) then
+		output.log_terse(errors.error())
+		errors.die(1)
+	end
+end
+
+local function ask_root_user ()
+
+end
+
+local function main ()
+	local disks_list, lang, install_mode, root_disk, disk
+	welcome()
+--	lang = ask_language()
+	install_mode = ask_install_mode()
+	get_disks()
+	if lvm_support() then
+		get_lvm_devices()
+	end
+	disk_list = switch(install_mode):caseof {
+		removable = Disks.Removables,
+		standard = Disks.HardDisks,
+	}
+	--show_found_disks(disk_list)
+--	disk = ask_disk_to_format(disk_list)
+	partition = ask_where_to_install(disk_list)
+--	ask_mounts(disk_lists)
+	dest=install_gobo(partition)
+	create_gobo_tree()
+	ask_root_user(dest)
+	create_hardcoded_files(dest)
+	install_packages(dest)
+end
+
+main()

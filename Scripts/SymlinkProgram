@@ -1,0 +1,44 @@
+-- vi: set filetype=lua foldmethod=marker foldlevel=0:
+--
+-- SymlinkProgram.lua
+-- ---------------------------------------------------------------------------
+--  - 2008
+-- ---------------------------------------------------------------------------
+-- Author: Aitor Pérez Iturri - <aitor.iturri@gmail.com>	
+-- Created: 11/01/08 00:16:33 CET
+-- License: GNU GPL (see www.fsf.org for details)
+-- ---------------------------------------------------------------------------
+-- Description:
+--
+-- ---------------------------------------------------------------------------
+
+require "env"
+
+-- Imports
+require "GoboLinux.OptionParser"
+
+-- Local Variables
+local OptionParser = GoboLinux.OptionParser
+
+-- OptionParser
+local script = OptionParser:new()
+if not script then
+	output.log_error("Unable to create parser")
+	errors.die
+end
+
+-- Parser Settings
+script.Program = "SymlinkProgram"
+script.Credirs = "Aitor Pérez Iturri - 2007 -GNU GPL"
+script.Version = "1.0"
+script.Usage = script.Program .. "[options] <program_name> [<program_version>]"
+script.Description = "Links a program from the /Program hierarchy in the /System tree."
+script.Example = script.Program.." WeirdSuperLib 2.4"
+
+-- Parser Arguments
+script:addEntry("s","settings","Link settings.","yes",{"yes","no"})
+script:addEntry("l","libraries","Link libraries.","yes",{"yes","no"})
+script:addEntry("e","executables","Link executables.","yes",{"yes","no"})
+script:addEntry("h","headers","Link headers.","yes",{"yes","no"})
+script:addEntry("a","shared","Link settings.","yes",{"yes","no"})
+script:addEntry("s","settings","Link settings.","yes",{"yes","no"})

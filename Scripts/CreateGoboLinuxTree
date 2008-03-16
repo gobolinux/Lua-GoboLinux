@@ -1,0 +1,77 @@
+#!/bin/lua
+-- vi: set foldmethod=marker foldlevel=0:
+--
+-- CreateGoboLinuxTree
+-- ---------------------------------------------------------------------------
+--  - 2007
+-- ---------------------------------------------------------------------------
+-- Author: Aitor Pérez Iturri - <aitor.iturri@gmail.com>	
+-- Created: 16/12/07 01:14:16 CET
+-- License: GNU GPL (see www.fsf.org for details)
+-- ---------------------------------------------------------------------------
+-- Description:
+--
+-- ---------------------------------------------------------------------------
+
+require "env"
+
+-- Imports {{{1
+require "GoboLinux"
+require "GoboLinux.OptionParser"
+require "GoboLinux.output"
+require "GoboLinux.errors"
+require "GoboLinux.system"
+require "GoboLinux.fs"
+
+local OptionParser = GoboLinux.OptionParser
+local system = GoboLinux.system
+local output = GoboLinux.output
+local errors = GoboLinux.errors
+local system = GoboLinux.system
+local fs = GoboLinux.fs
+
+-- Register script name for output {{{1
+output.register_name("CreateGoboLinuxTree")
+
+-- OptionParser {{{1
+local script = OptionParser:new()
+if not script then
+	output.log_error("Unable to create parser")
+end
+
+-- Parser settings {{{2
+script.Program = "CreateGoboLinuxTree"
+script.Credits = "Aitor Pérez Iturri - 2007 - GNU GPL"
+script.Version = "1.0"
+script.Usage = script.Program.. " [options] [dir]"
+script.Description = [[Creates a new GoboLinux tree file system hiearchy ]]..
+	[[ under `dir`. If `dir` is not passed as an argument then the current ]]
+	.. [[directory will be used.]]
+script.Example = script.Program .. " /Mount/USB-Stick"
+
+-- Add Parser options {{{2
+
+-- Functions {{{1
+-- main function {{{2
+local function main (argc, argv)
+	local output_path
+	script:parseOptions(argv)
+	if #script.Arguments > 1 then
+		script.usage()
+	end
+	output_path = script.Arguments[1] or fs.pwd()
+	if not fs.is_directory(output_path) then
+		output.log_error("`"..output_path.."' doesn't exists")
+		errors.die()
+	end
+	if not system.ask_yn("Creating GoboLinux tree under "..output_path.."?") then
+		errors.die(1)
+	end
+	if not system.create_tree(output_path) then
+		errors.peerror()
+	end
+	output.log_terse("New GoboLinux tree created under "..output_path)
+	os.exit(0)
+end
+
+main(#arg, arg)

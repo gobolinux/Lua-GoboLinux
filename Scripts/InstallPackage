@@ -1,0 +1,303 @@
+#!/bin/lua
+-- vi: set foldmethod=marker foldlevel=0:
+--
+-- InstallPackage
+-- ---------------------------------------------------------------------------
+--  - 2007
+-- ---------------------------------------------------------------------------
+-- Author: Aitor Pérez Iturri - <aitor.iturri@gmail.com>	
+-- Created: 16/12/07 01:12:32 CET
+-- License: GNU GPL (see www.fsf.org for details)
+-- ---------------------------------------------------------------------------
+-- Description:
+--
+-- ---------------------------------------------------------------------------
+
+require "env"
+
+-- Imports
+require "GoboLinux.OptionParser"
+require "GoboLinux.Program"
+require "GoboLinux.Package"
+require "GoboLinux.errors"
+require "GoboLinux.output"
+require "GoboLinux.fs"
+require "GoboLinux.system"
+
+local OptionParser = GoboLinux.OptionParser
+local Program = GoboLinux.Program
+local Package = GoboLinux.Package
+local fs = GoboLinux.fs
+local errors = GoboLinux.errors
+local output = GoboLinux.output
+local system = GoboLinux.system
+
+output.Verbose = 2
+
+-- OptionParser
+local script = OptionParser:new()
+if not script then
+	output.log_error("Unable to create parser")
+	errors.die()
+end
+
+-- Parser Settings
+script.Program = "InstallPackage"
+script.Credits = "Aitor Pérez Iturri - 2007 - GNU GPL"
+script.Version = "1.0"
+script.Usage = script.Program .. "[options] <package_file|<package_dir>" 
+script.Description = "Install GoboLinux packages"
+script.Example = script.Program.." Gimp--2.0.5.tar.gz"
+
+-- Parser arguments
+script:addBoolean("b","batch","Do not ask for confirmation", false)
+script:addBoolean(nil,"use-contrib", "Look in contrib store as well", false)
+script:addBoolean("D","no-dependecies", "Do not try to fullfit dependencies", false)
+script:addBoolean("I","no-install", "Do not install, only locate and fetch the package"..
+		"\nAutomaticallt enables --keep", false)
+script:addBoolean("k","keep","Do not remove downloaded packages", false)
+script:addBoolean("S","no-sign-check", "Do not check the signature", false)
+script:addBoolean("U","no-updatesettings", "Do not update settings for the package", false)
+script:addBoolean("W","no-web", "Do not check remote site for packages, and bypass fetching of archives.", false)
+script:addEntry("s","same","What do do when unpackaging over the same version","ask",{"ask","remove","keep","cancel"})
+script:addEntry("o","old","What do do with a previosly existing version of a package if found.","ask",{"ask","remove","keep","cancel"})
+script:addEntry("u","unmanaged","What do do with unmanaged files from package.","ask",{"ask","remove","keep"})
+
+
+local function show_status (status, str)
+	for _,file in ipairs(status.success) do
+			local msg
+			if str then msg = file .. " " .. str
+			else msg = file end
+			output.log_verbose(msg,2,2)
+		end
+	for _, fails in ipairs(status.fails) do
+		output.log_error(fails[1]..": "..fails[2],2)
+	end
+end
+
+local function disable_files (program)
+	local disable_funcs = {
+		{"Executables", program.disableExecutables},
+		{"Libraries", program.disableLibraries},
+		{"Headers", program.disableHeaders},
+		{"Manuals", program.disableManuals},
+		{"Shared", program.disableShared},
+		{"Wrappers", program.disableWrappers},
+		{"Tasks", program.disableTasks},
+		{"Environment", program.disableEnvironment}
+	}
+	for _,ft in ipairs(disable_funcs) do
+		local status = ft[2](program)
+		if not status then
+			errors.peerror()
+		end
+		show_status(status, "[DELETED]")
+	end
+	if not script:boolean("U") then
+		local status = program:disableSettings()
+		show_status(status, "[DELETED]")
+	end
+	if program:hasUnmanaged() then
+		local status = program:disableUnmanaged()
+		show_status(status, "[DELETED]")
+	end
+end
+
+-- disable a program
+local function disable_program (program)
+	output.log_normal("Disabling "..program.Name..", version "..program.Version)
+	if not program:disable() then
+		errors.peerror()
+	end
+	disable_files(program)
+	return true
+end
+
+local function remove_program (program)
+	output.log_normal("Removing "..program.Name..", version "..program.Version)
+	disable_files(program)
+	if not program:remove() then
+		return false
+	end
+	return true
+end
+
+-- keeps the current version
+local function keep_program (program)
+	output.log_normal("Keeping existing version")
+	if not disable_program(program) then
+		return false
+	end
+	return true
+end
+
+-- Ask user what to do when the same version is found
+local function ask_user_for_same (program)
+	local choice
+	if script:boolean("batch") then
+		-- default is to keep the current version installed
+		return keep_program(program)
+	end
+	choice = system.ask_choice("Remove existing?",{"Remove", "Keep", "Cancel"})
+	return switch(choice):caseof{
+		r = function () 
+			if not remove_program(program) then
+				return false
+			end
+			return "remove"
+		end,
+		c = function () errors.die(1) end,
+		k = function () return keep_program(program) end,
+	}
+end
+
+local function ask_user_for_unmanaged (program)
+	local choice
+	if script:boolean("batch") then
+		-- default is to keep unmaanged files
+		return "keep"
+	end
+	choice = system.ask_choice("What do you want to do with unmanaged files?",{"Remove", "Keep"})
+	return switch(choice):caseof{
+		r = function () return "remove" end,
+		k = function () return "keep" end
+	}
+end
+
+-- Symlink a program
+local function symlink_program (program)
+	output.log_normal("Symlinking "..program.Name..", version "..program.Version)
+	local install_funcs = {
+		{"Executables", program.symlinkExecutables},
+		{"Libraries", program.symlinkLibraries},
+		{"Headers", program.symlinkHeaders},
+		{"Manuals", program.symlinkManuals},
+		{"Shared", program.symlinkShared},
+		{"Tasks", program.symlinkTasks},
+		{"Wrappers", program.symlinkWrappers},
+		{"Environment", program.symlinkEnvironment}
+	}
+
+	if not program:symlink() then
+		return false
+	end
+	for _, ft in ipairs(install_funcs) do
+		local name = ft[1]
+		local func = ft[2]
+		local status
+		output.log_verbose("Symlinking " .. name,1)
+		status = func(program)
+		if not status then errors.peerror() end
+		show_status(status)
+	end
+	if not script:boolean("U") then
+		output.log_verbose("Installing Settings",1)
+		if not program:installSettings() then
+			return false
+		end
+		output.log_verbose("Symlinking Settings",1)
+		local status = program:symlinkSettings()
+		show_status(status)
+	end
+
+	if program:hasUnmanaged() then
+		output.log_verbose("Installing Unmanaged files",1)
+		local status = program:installUnmanaged()
+		show_status(status)
+	end
+	return true
+end
+
+-- Installs the package and tries to symlink the program
+local function install_package (package)
+	-- Install pacakge
+	output.log_normal("Installing "..package.Name..", version "..package.Version..", revision "..package.Revision)
+	output.log_normal("Uncompressing to "..system.prefix()..system.programs())
+	return package:install()
+end
+
+-- main function
+local function main (argc, argv)
+	local package, program, file, name, version, arch
+	script:parseOptions(argv)
+
+	if #script.Arguments == 0 then
+		script:usage()
+	end
+	
+	-- Set prefix and programs dir
+	GOBO_Prefix = os.getenv("GOBO_PREFIX") or GoboLinux.GOBO_PREFIX
+	GOBO_Programs = os.getenv("GOBO_PROGRAMS") or GoboLinux.GOBOPROGRAMS
+
+	if fs.is_regular(package) then
+		file = script.Arguments[1]
+		package = Package.newFromFile(file) or errors.peerror()
+		--if not package then
+		--	errors.peerror()
+		--end
+	else
+		name = script.Arguments[1]
+		version = script.Arguments[2]
+		arch = script.Arguments[3]
+		package = Package.new(name, version, arch) or errors.peerror()
+	end
+
+	-- Ask user to proceed with instalation
+	local pkg_info = package.Name .. " " ..package.Version..", revision " ..
+		package.Revision.." on " .. system.prefix()..system.programs()
+	if not script:entry("batch") and not system.ask_yn("Do you want to install "
+			..pkg_info.."?") then
+		errors.die(1)
+	end
+
+	-- look is package is yet installed
+	program = Program.new(package.Name)
+
+	local install = false
+	if program and program:isActive() then 
+		if program.Version == package.Version then
+			-- same program version installed
+			output.log_warning("An installation of this same version already exists")
+		else
+			output.log_warning("Version "..program.Version.." for "..program.Name.." is active.")
+		end
+		switch(script:entry("same")):caseof {
+			-- keep current version
+			keep = function () 
+				if not keep_program(program) then
+					errors.peerror()
+				end
+			end,
+			-- ask to the user what to do
+			ask = function ()
+				local choice
+				choice = ask_user_for_same(program, package) or errors.peerror()
+				if choice == "remove" then
+					program = install_package(package) or errors.peerror()
+				end
+			end,
+			-- remove the current version
+			remove = function () 
+				if not remove_program(program) then
+					errors.peerror()
+				end
+				program = install_package(package) or errors.peerror()
+			end,
+			-- cancel the operation
+			cancel = function ()
+				os.exit(0)
+			end,
+		}
+	else
+		program = install_package(package) or errors.peerror()
+	end
+	-- symlink new program
+	if not symlink_program(program) then
+		output.log_error(errors.error())
+		errors.die(1)
+	end
+end
+
+-- Start the script
+main(#arg, arg)

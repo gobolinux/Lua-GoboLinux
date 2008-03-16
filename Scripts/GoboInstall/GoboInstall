@@ -1,0 +1,316 @@
+#!/bin/lua
+-- vi: set foldmethod=marker foldlevel=0:
+--
+-- GoboInstall.lua
+-- ---------------------------------------------------------------------------
+--  - 2008
+-- ---------------------------------------------------------------------------
+-- Author: Aitor Pérez Iturri - <aitor.iturri@gmail.com>	
+-- Created: 20/01/08 00:00:06 CET
+-- License: GNU GPL (see www.fsf.org for details)
+-- ---------------------------------------------------------------------------
+-- Description:
+--
+-- ---------------------------------------------------------------------------
+
+require "env"
+
+-- Imports {{{1
+require "goboinstall"
+require "Flavours"
+require "GoboLinux.Steps"
+require "GoboLinux.output"
+require "GoboLinux.system"
+require "GoboLinux.fs"
+require "GoboLinux.errors"
+require "GoboLinux.switch"
+require "GoboLinux.cui"
+require "GoboLinux.Package"
+require "GoboLinux.Program"
+
+--require "Steps.StandardInstall"
+--require "Steps.RemovableInstall"
+--require "Steps.SChrootInstall"
+
+
+local Package = GoboLinux.Package
+local Program = GoboLinux.Program
+local output = GoboLinux.output
+local system = GoboLinux.system
+local fs = GoboLinux.fs
+local errors = GoboLinux.errors
+local cui = GoboLinux.cui
+local Steps = GoboLinux.Steps
+
+-- Local Variables {{{1
+-- Languages {{{2
+local languages_list = {
+	{"Español",nil, "es"},
+	{"English",nil, "en"},
+	{"Portuguese", nil, "po"},
+	{"Euskera", nil, "eu"},
+	{"Catalá", nil, "ca"},
+	{"Galego", nil, "ga"}
+}
+
+-- Install Modes {{{2
+local install_methods_list = {
+	{"Standard Method",nil,"StandardInstall"},
+	{"Install on a removable device",nil,"RemovableInstall"},
+	{"GoboLinux SChroot System", nil, "SChrootInstall"},
+}
+
+-- Modifiers for titles {{{2
+local modifiers = {
+		"LevelPosition=Center",
+		"Level=2",
+	}
+
+-- Some system varaibles {{{2
+local target = "/Mount/GoboLinux/"
+
+-- Global variables {{{1
+Mounted = {}
+Target = target
+
+-- Steps {{{1
+-- Welcome {{{2
+function Welcome ()
+	local text = [[
+
+GoboLinux Installer Tool.
+Written by Aitor Pérez Iturri.
+GNU GPL - 2207.
+
+]]
+	cui.title("GOBOLINUX INSTALLER 1.0","Level=1","Position=Center","LevelPosition=Center")
+	cui.text(text,"Align=Center","Level=1","Position=Center","LevelPosition=Center")
+	return "ChooseLanguage"
+end
+
+-- ChooseLanguage {{{2
+local function ChooseLanguage ()
+	local text = [[
+
+Here you can choose the language of your GoboLinux system.
+
+]]
+	print()
+	cui.title("Language Selection","Color=BoldGreen",unpack(modifiers))
+	cui.text(text,unpack(modifiers))
+	cui.ask_list("Choose your language (or enter a command):",
+		languages_list, menu_commands_list, "Position=Center","Align=Left",unpack(modifiers))
+	return "ChooseInstallMode"
+end
+
+-- ChooseInstallMehotd {{{2
+local function ChooseInstallMode ()
+	local text = [[
+
+Here you can choose the installion method. You can install GoboLinux directly on a hard disk or you can select to install it on an removable device (like an usb or a compact flash).
+
+]]
+	local answer
+	print()
+	cui.title("Install Method","Color=BoldGreen",unpack(modifiers))
+	cui.text(text,unpack(modifiers))
+	answer = cui.ask_list("Choose an install mode (or enter a command):",
+		install_methods_list, menu_commands_list, "Position=Center","Align=Left",unpack(modifiers))
+	return switch(answer):caseof {
+		RemovableInstall = function ()
+			return "GoodBye", "Sorry, the choosen install mode is not yet supported"
+		end,
+		StandardInstall = function ()
+			if not pcall(require,"Steps.StandardInstall") then
+				return "GoodBye", "Unable to open Steps.StandardInstall module"
+			end
+			local err = Steps.StandardInstall.start()
+			if err then 
+				return "GoodBye", err 
+			end
+			return "ChooseFlavour", answer
+		end,
+		SChrootInstall = function ()
+			if not pcall(require,"Steps.SChrootInstall") then
+				return "GoodBye", "Unable to open Steps.SChrootInstall module"
+			end
+			local err = Steps.SChrootInstall.start()
+			if err then
+				return "GoodBye", err
+			end
+			return "ChooseFlavour", answer, dest_dir
+		end
+	}
+end
+
+-- ChooseFlavour {{{2
+local function ChooseFlavour (install_mode, dest_dir)
+	local title = "Choose Flavour"
+	local flavours_choices = {}
+	local answer
+	for flavour in pairs(FlavoursList) do
+		flavours_choices[#flavours_choices+1] = {flavour, nil, flavour}
+	end
+	cui.title(title, "Color=BoldGreen", unpack(modifiers))
+	print()
+	answer = cui.ask_list("Choose a flavour to install", flavours_choices, nil, 
+			"Position=Center", unpack(modifiers))
+	return "InstallPackages", answer, install_mode, dest_dir
+end
+
+-- InstallPackages {{{2
+local function InstallPackages (flavour, install_mode, dest_dir)
+	if not pcall(require,"Flavours."..flavour) then
+		return "GoodBye", "Unable to install "..flavour
+	end
+	local packages = Flavours[flavour].Packages
+	local co = coroutine.create(function ()
+		for i,p in ipairs(packages) do
+			local package = Package.new(p[1],p[2],p[3])
+			if not package then 
+				return false, "Installing package "..p[1].." "..p[2],
+						"Unable to found package "..p[1].." "..p[2]
+			end
+			if package then
+				local desc = "Installing "..package.Name.." "..package.Version..
+					" under "..system.prefix()..system.programs()
+				coroutine.yield(nil,desc, function () 
+					package:install()
+				end)
+				local program = Program.new(package.Name)
+				desc = "Symlinking "..package.Name.." "..package.Version..
+					" under "..system.prefix()..system.programs()
+				if not program then
+					return false, desc, 
+						"Unable to found program"
+				end
+				coroutine.yield(true,desc, function ()
+					return symlink_program(program)
+				end)
+			end
+		end
+		return true,"Packages Installed"
+	end)
+	GOBO_Prefix =  Steps[install_mode].Target or Target
+	cui.title("Installing Packages ["..flavour.."]","Color=BoldGreen",unpack(modifiers))
+	print()
+	local err
+	_,err = cui.percent_bar(#packages, co, "Position=Center",unpack(modifiers))
+	print()
+	if err then
+		return "GoodBye", err
+	end
+	return "ConfigurePackages", flavour, install_mode
+end
+
+-- Configure Packages {{{2
+local function ConfigurePackages (flavour, install_mode)
+	local packages = Flavours[flavour]
+	-- exports PackagesConf coroutine
+	--require("Flavours."..flavour)
+	local co = Flavours[flavour].Coroutine
+	local n = Flavours[flavour].Items
+	local func = Flavours[flavour].Function
+	
+	if not co then
+		return "InstallModeEnd", install_mode
+	end
+	local title = "Configuring Packages"
+	cui.title(title, "Color=BoldGreen", unpack(modifiers))
+	print()
+	local err
+	_, err = cui.percent_bar(n, co, "Position=Center",
+			unpack(modifiers))
+	if err then 
+		return "GoodBye", err
+	end
+	print()
+	if not func then
+		return "InstallModeEnd", install_mode
+	end
+	local modifiers2 = {
+		"Level=3",
+		"LevelPosition=Center",
+		"Position=Left",
+	}
+	for _, f in ipairs(func) do
+		cui.title("Configuring "..f[1], "Color=Cyan",unpack(modifiers2))
+		print()
+		local s,desc, func = coroutine.resume(f[2])
+		if not s then
+			-- internal err when executing thread
+			cui.text(desc, "Color=BoldRed", "Level=3", "LevelPosition=Center","Position=Center")
+			print()
+		end
+		if not desc then
+			-- coroutine ends with error
+			-- now error description is in func
+			cui.text(func, "Color=BoldRed", "Level=3","LevelPosition=Center","Position=Center")
+			print()
+		end
+		while coroutine.status(f[2]) ~= "dead" do
+			cui.text(desc,"Color=White", unpack(modifiers2))
+			local _, err = func()	
+			if err then
+				cui.text(err, "Color=BoldRed", "Level=3", "LevelPosition=Center", "Position=Center")
+			end
+			_,desc, func = coroutine.resume(f[2])
+			print()
+		end
+	end
+	return "InstallModeEnd", install_mode
+end
+
+-- InstallModeEnd {{{2
+local function InstallModeEnd (install_mode)
+	local hook = package.loaded[install_mode].finish
+	if not hook then 
+		return "GoodBye", nil, "Bye bye"
+	end
+	local text, err = package.loaded[install_mode].finish()
+	if err then
+		return "GoodBye", err
+	end
+	-- Tells GoodBye to show text as an succesful installtion
+	return "GoodBye", nil, text
+end
+
+-- GoodBye {{{2
+function GoodBye (err, text)
+	print()
+	local title1 = "Thanks for Installing GoboLinux"
+	local title2 = "GoboLinux install failed"
+	if not err then
+		local text = text or ";)"
+		cui.title(title1,"Color=BoldGreen",unpack(modifiers))
+		print()
+		cui.text(text, unpack(modifiers))
+	else
+		cui.title(title2,"Color=BoldRed", unpack(modifiers))
+		print()
+		cui.text(err,"Color=Red", unpack(modifiers))
+	end
+	umount_devices(Mounted)
+end
+
+-- Main {{{1
+local function main ()
+	local InstallSteps = {
+		Welcome = Welcome,
+		ChooseLanguage = ChooseLanguage,
+		ChooseInstallMode = ChooseInstallMode,
+		ChooseFlavour = ChooseFlavour,
+		InstallPackages = InstallPackages,
+		ConfigurePackages = ConfigurePackages,
+		InstallModeEnd = InstallModeEnd,
+		GoodBye = GoodBye,
+	}
+	cui.clear_screen()
+	cui.set_cursor(0,0)
+	local steps = Steps.new(InstallSteps)
+	steps:start("Welcome")
+end
+
+
+
+main()

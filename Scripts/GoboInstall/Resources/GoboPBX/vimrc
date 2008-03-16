@@ -1,0 +1,30 @@
+set nocompatible
+
+set runtimepath+=/System/Settings/vim
+
+set ts=4
+set sw=4
+set bs=2		" allow backspacing over everything in insert mode
+set ai			" always set autoindenting on
+set nobackup		" do not keep a backup file, use versions instead
+set viminfo='20,\"50	" read/write a .viminfo file, don't store more
+			" than 50 lines of registers
+set history=50		" keep 50 lines of command line history
+set ruler		" show the cursor position all the time
+map Q gq                " Don't use Ex mode, use Q for formatting
+
+colorscheme delek
+
+set filetype=asterisk
+"setlocal spell spelllang=en
+au!
+
+autocmd FileType *      set formatoptions=tcql nocindent comments&
+
+filetype plugin indent on
+syntax on
+set hlsearch
+
+
+" Make p in Visual mode replace the selected text with the "" register.
+vnoremap p <Esc>:let current_reg = @"<CR>gvdi<C-R>=current_reg<CR><Esc>

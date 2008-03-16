@@ -1,0 +1,38 @@
+-- vi: set filetype=lua foldmethod=marker foldlevel=0:
+--
+-- DisableProgram.lua
+-- ---------------------------------------------------------------------------
+--  - 2008
+-- ---------------------------------------------------------------------------
+-- Author: Aitor Pérez Iturri - <aitor.iturri@gmail.com>	
+-- Created: 11/01/08 00:27:16 CET
+-- License: GNU GPL (see www.fsf.org for details)
+-- ---------------------------------------------------------------------------
+-- Description:
+--
+-- ---------------------------------------------------------------------------
+
+-- Imports
+require "env"
+require GoboLinux.OptionParser
+require GoboLinux.output
+require GoboLinux.errors
+
+-- Local Variables
+local OptionParser = GoboLinux.OptionParser
+local output = GoboLinux.output
+local errors = GoboLinux.errors
+
+-- OptionParser
+local script = OptionParser.new()
+if not script then
+	output.log_error("Unable to create parser")
+	errors.die(1)
+end
+
+-- Parser Settings
+script.Program = "DisableProgram"
+script.Version = "1.0"
+
+-- Parser Arguments
+

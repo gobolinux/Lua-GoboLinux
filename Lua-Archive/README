@@ -1,0 +1,50 @@
+Lua-Archive - A lua binding for libarchive.
+-------------------------------------------
+Author: Aitor Pérez Iturri <aitor.iturri@gmail.com>
+Version: 1.0
+License: GNU GPL.
+
+1. License:
+
+This code is licensed under the terms of the GNU General Public License, for
+details see COPYING file. If you want to know more about GNU and the GNU
+project, please take a look at http://www.gnu.org. If you want to know more
+about the Free Software Foundation, please visit http://www.fsf.org.
+
+2. Overview:
+Lua-Archive is lua binding to the libarchive library. This binding has been coded using lua 5.1.2.
+Lua-Archive includes some modules to operate with some kind of archives:
+	- tar files
+	- cpio files
+	- pax files
+
+
+
+3. API
+
+All modules share the same API, directly from the module table can be accessed this functions:
+
+	(handler) open ((string) file, (string) mode, (string) compression)
+		Opens a new handler for file.
+		Second argument 'mode' can be:
+			"r" : read mode
+			"w" : write mode
+		Third argument 'compression' can be:
+			"none" : don't use any compression.
+			"gzip" : use gzip compression.
+			"bzip" : use bzip compression.
+
+Each handler can access this functions:
+
+	close
+	read
+	write
+	extracAll
+	addTree
+	setVerbose
+	unsetVerbose
+	type
+
+
+
+Aitor Pérez Iturri,

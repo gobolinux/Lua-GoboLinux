@@ -1,0 +1,204 @@
+Lua-GoboLinux
+	Description:
+		:Lua-GoboLinux es una serie de módulos lua que permiten la creacción
+		:de herramientas para el sistema GoboLinux en lua de manera sencilla
+	Módulos:
+		GoboLinux.fs
+		GoboLinux.types
+		GoboLinux.errors
+		GoboLinux.system
+		GoboLinux.OptionParser
+		GoboLinux.Package
+		GoboLinux.Program
+		GoboLinux.Recipe
+	[_] 51% Progreso:
+		[_] 50% GoboLinux
+			[X] 100% Definir variables locales que permitan personalizar acciones
+				[X] GOBO_Programs
+				[X] GOBO_Prefix
+			[_] 0% Definir mensajes de error para permitir locales
+				[_] fs
+				[_] system
+				[_] OptionParser
+				[_] Package
+				[_] Program
+				[_] Recipe
+		[_] 52% GoboLinux.Package
+			[_] 33% Constructores:
+				[_] new
+				[X] newFromFile
+				[_] newFromProgram
+			[_] 0% Métodos:
+				[_] install
+				[_] sign
+				[_] show
+				[_] install_file
+				[_] get
+					Método sólo disponible para paquetes desde la red.
+				[_] checksum
+			[_] 75% Funciones:
+				[X] get_name
+				[X] get_architecture
+				[X] get_version
+				[_] find_package
+			[X] 100% Types:
+				PACKAGE_STRING
+				[X] PACKAGE
+		[_] 33% GoboLinux.Program
+			[X] 100% Constructores
+				[X] new
+			[_] 0% Métodos
+				[_] createPackage
+				symlinkAll
+				[_] symlink
+				symlinkExecutables
+				symlinkShared
+				symlinkTasks
+				symlinkSettings
+				symlinkLibraries
+				symlinkHeaders
+				symlinkEnvironment
+				symlinkManuals
+				installUnmanaged
+				[_] disable
+				disableExecutables
+				disableShared
+				disableSettings
+				disableTasks
+				disableHeaders
+				disableLibraries
+				disableEnvironment
+				disableManuals
+				uninstallUnmanaged
+				disableAll
+				[_] show
+				Executables
+				Libraries
+				Tasks
+				Settings
+				Headers
+				Shared
+				Manuals
+				Unmanaged
+				Environment
+				owns
+				isActive
+				prefix
+				programs
+				remove
+			Funciones
+				is_installed
+				owner
+			[_] 0% Types
+				[_] PROGRAM
+				[_] PROGRAM_STRING
+			ToDo
+				file_to_gobofile
+				link_gobofile
+				link_gobodir
+		[_] 66% GoboLinux.types
+			[X] 100% Functiones:
+				[X] add_type
+				[X] check_type
+			[X] 100% Types:
+				[X] STRING
+				[X] NUMBER
+				[X] TABLE
+				[X] NIL
+				[X] BOOLEAN
+				[X] FUNCTION
+			[_] 0% ToDO
+				[_] Permitir que check_type pueda comprobar varios tipos a la vez
+					Ejemplo: check_type(v, "Tipo1", "Tipo2", ...)
+				[_] Añadir un argumento check_type indicando el número de argumento a comprobar
+					Ejemplo: check_type(v, "Tipo1", ..., 1)
+		[_] 58% GoboLinux.fs
+			[_] 75% Funciones
+				[X] is_regular
+				[X] is_file
+				[X] is_directory
+				[X] is_symlink
+				[X] is_executable
+				[X] is_writable
+				[X] is_readable
+				[X] files	
+				[X] tree
+				[X] pwd
+				[X] cd
+				[X] mkdir
+				[_] mkdir_butlast
+				[_] symlink
+				[_] cp
+				[_] mv
+			[X] 100% Types:
+				[X] PATH_STRING
+				[X] REGULAR_STRING
+				[X] DIRECTORY_STRING
+				[X] SYMLINK_STRING
+			[_] 0% ToDo
+				[_] Mejorar los errores en el chequeo de tipos. Los mesajes ahora no son muy buenos.
+		GoboLinux.errors
+		GoboLinux.system
+		GoboLinux.OptionParser
+		GoboLinux.cui
+		GoboLinux.Steps
+	Scripts
+		InstallPackage
+		DisableProgram
+		SymlinkProgram
+		UpdateSettings
+		CreateGoboTree
+		GoboInstall
+			flavours.lua
+			goboinstall.lua
+			GoboPBX.lua
+			SChroot.lua
+
+GoboLinux Installer
+	Description
+	TODO
+	Libraries
+		gobolinux.lua
+		Flavours.lua
+		CommonSteps.lua
+			Welcome
+			ChooseLanguage
+			ChooseInstallMode
+			ConfigureUsers
+			ConfigureNetwork
+			ConfigureBoot
+			ChooseFlavour
+		RemovableSteps.lua
+		StandardSteps.lua
+		SChrootSteps.lua
+		RootLess.lua
+	Progress
+		GoboInstall
+			
+
+
+InstallGoboLinux
+	: * Escoger idioma
+	: * Escoger keymap
+	: * Escoger fuente
+	: * Escoger tipo de instalación
+	: 	* USB-Stick
+	: 	* RootLess
+	: 	* Standard
+	: * Escoger disco donde instalar
+	: * Particionar
+	: * Escoger Particiones
+	: 	* Usar swap (y/n)
+	: 	* Puntos de montaje
+	: * Crear Tree
+	: * Seleccionar sabor de instalación o manual
+	: 	* Seleccionar paquetes
+	: * Instalarlos
+	: * Instalar grub
+	: * Configurar sistema
+	: 	* Password root
+	: 	* Añadir usuarios
+	: 	* Tema
+	: 	* Network
+	: 	* Paquetes que se puedan configurar (opcional)
+	: * Desmontar

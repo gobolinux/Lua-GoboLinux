@@ -1,0 +1,20 @@
+#!/bin/lua
+-- vi: set foldmethod=marker foldlevel=0:
+--
+-- CheckDependencies.lua
+-- ---------------------------------------------------------------------------
+--  - 2008
+-- ---------------------------------------------------------------------------
+-- Author: Aitor Pérez Iturri - <aitor.iturri@gmail.com>	
+-- Created: 10/02/08 10:31:21 CET
+-- License: GNU GPL (see www.fsf.org for details)
+-- ---------------------------------------------------------------------------
+-- Description:
+--
+-- ---------------------------------------------------------------------------
+
+require "GoboLinux.Program"
+require "GogoLinux.fs"
+
+
+

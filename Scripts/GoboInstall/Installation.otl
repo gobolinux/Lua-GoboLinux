@@ -1,0 +1,108 @@
+GoboLinux Installation Tool Outliner Process
+
+Contents
+	env.lua
+	GoboInstall
+		Description
+			:Main Program
+	Library
+		gobolinux.lua
+			Description
+				:Miscaleaneus functions used in the program
+		Flavours
+			SChroot.lua
+				Description
+					:Defines the SChroot Flavour (Packages, Coroutine and
+					:Function)
+			GoboPBX.lua
+				Description
+					:Defines the GoboPBX Flavour (Packages, Coroutine and
+					:Function)
+			Configures.lua
+				Description
+					:Defines common functions to configure individual packages
+			init.lua
+				Description
+					:Only to list avaible flavours
+		Steps
+			StandardInstall.lua
+				Description
+					:Define Steps used in Standard Install
+			SChrootInstall.lua
+				Description
+					:Define Steps used in SChroot Install
+			RemovableInstall.lua
+				Description
+					:Define Steps used in Removable Install
+			CommonSteps.lua
+				Description
+					:Define common steps shared by two or more install modes
+Steps:
+	StandardInstall.lua
+		start
+			ChooseRoot
+			ChooseSwap - TODO
+			AskMount
+			InstallWarning
+			CreateGoboTree
+		finish
+			ChooseRootUser
+			AskUser
+			CreateUsers
+			ConfigureNetWork - TODO
+			ConfigureBoot
+	SChrootInstall.lua
+		start
+			AskDirectory
+			CreateGoboTree
+		finish
+	RemovableInstall.lua
+		start
+			ChooseRoot
+			ChooseBoot
+			ChooseSwap
+			InstallWarning
+			CreateGoboTree
+		finish
+			ChooseRootUser
+			AskUser
+			CreateUsers
+			ConfigureNetwork - TODO
+			ConfigureBoot
+	GoboInstall
+		Welcome
+		ChooseLanguage
+		ChooseInstallMode
+			:calls Steps.[install_mode].start
+		ChooseFlavour
+		InstallPackages
+			:installs packages from Flavours[flavour].Packages
+		ConfigurePackages
+			:calls Flavours[flavours].Coroutine
+			:calls Flavours[flavour].Function
+		InstallModeEnd
+			:calls Steps.[install_mode].finish
+		GoodBye
+
+Flavours
+	GoboPBX
+		Description
+		Packages
+			Vim
+				Add Vim scripts to edit asterisk files
+				Remove the rest
+			Glibc
+				Add ld.so.cache
+			GCC
+				Leave only required libraries
+			BusyBox
+				Try to use busybox only
+Common Steps Functions:
+	(disks) choose_mount_point (disks)
+	(disks) ask_mount (disks)
+	(string) InstallWarning (mounts)
+	(users) ChooseRootUser (users)
+	(users) AskUser (users)
+	(boolean) CreateUsers (users)
+	(boolean) ConfigureBoot (mounts)
+
